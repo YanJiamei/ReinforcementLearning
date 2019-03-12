@@ -1,26 +1,11 @@
-"""
-The DQN improvement: Prioritized Experience Replay (based on https://arxiv.org/abs/1511.05952)
-
-View more on my tutorial page: https://morvanzhou.github.io/tutorials/
-
-Using:
-Tensorflow: 1.0
-gym: 0.8.0
-"""
-
 import numpy as np
 import tensorflow as tf
-
-# np.random.seed(1)
-# tf.set_random_seed(1)
 
 
 class SumTree(object):
     """
     This SumTree code is a modified version and the original code is from:
     https://github.com/jaara/AI-blog/blob/master/SumTree.py
-
-    Story data with its priority in the tree.
     """
     data_pointer = 0
 
