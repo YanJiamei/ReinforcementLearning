@@ -70,11 +70,12 @@ class Learner_entro_reward:
                 with tf.variable_scope('weighted_loss'):
                     self.cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.y, labels = self.y_)
                     weighted_cross_entropy =tf.multiply(self.cross_entropy, self.w)
-                    self.loss = tf.divide(tf.reduce_sum(weighted_cross_entropy), tf.reduce_sum(self.w))
-                    
+                    # use unweighted--loss to validation the reward, use weighted_loss to train
+                    self.weighted_loss = tf.divide(tf.reduce_sum(weighted_cross_entropy), tf.reduce_sum(self.w))
+                    self.loss = tf.reduce_mean(self.cross_entropy)
                 with tf.variable_scope('train'):
                     self.global_step = tf.Variable(dtype=tf.int64, initial_value=0, trainable=True)
-                    self.train = tf.train.AdagradOptimizer(self.learning_rate).minimize(self.loss, global_step=self.global_step)
+                    self.train = tf.train.AdagradOptimizer(self.learning_rate).minimize(self.weighted_loss, global_step=self.global_step)
                     
                 with tf.variable_scope('accuracy'):
                     correct_prediction = tf.equal(tf.argmax(self.y, 1), self.y_)
@@ -100,7 +101,58 @@ class Learner_entro_reward:
         # self.buffer_data = self.trans_data.sample(n=self.buffer_size)
         # self.buffer_data['weights']=1.0
 
-    def step(self, action, trans_penalty, action_base = 1.0):
+    # def step(self, action, trans_penalty, action_base = 1.0):
+    #     entro_gap = (self.H_ji - self.H_ii_0)
+    #     past_loss = []
+    #     if action==0:
+    #         action_flag = 0
+    #         for i in range(self.learning_steps):
+    #             _, loss, self.learn_step_counter= \
+    #                 self.sess.run([self.train, self.loss, self.global_step], feed_dict=self.load_feed_dict(data = self.local_data, batch_size = self.batch_size))
+    #             past_loss.append(loss)
+    #     else:
+    #         action_flag = 1
+    #         #action>0: reweight buffer data
+    #         self.buffer_data['weights']= action_base * action
+    #         #train buffer first
+    #         # for i in range(int(self.learning_steps*0.1)):
+    #         #     _, loss, self.learn_step_counter= \
+    #         #         self.sess.run([self.train, self.loss, self.global_step], feed_dict=self.load_feed_dict(data = self.buffer_data, batch_size = self.buffer_size))
+    #         #     past_loss.append(loss)
+    #         #concat Dji U Dii
+    #         self.local_data = pd.concat([self.local_data, self.buffer_data], axis=0, ignore_index=True)
+        
+    #         #local training
+    #         for i in range(int(self.learning_steps*1.0)):
+    #             _, loss, self.learn_step_counter= \
+    #                 self.sess.run([self.train, self.loss, self.global_step], feed_dict=self.load_feed_dict(data = self.local_data, batch_size = self.batch_size))
+    #             past_loss.append(loss)
+    #         #reload buffer
+    #         self.buffer_data = self.trans_data.sample(n=self.buffer_size)
+    #         self.buffer_data['weights']=1.0
+
+    #     #observation Hji - Hii
+    #      #F1 AVE LOSS
+    #     buffer_partition = self.buffer_size / self.local_data.shape[0]
+    #     iter_partion = self.learn_step_counter / self.learning_steps_max
+    #     self.H_ii_t = np.mean(past_loss[-5:])
+        
+    #     acc_ii = self.sess.run(self.accuracy, feed_dict=self.load_feed_dict(data = self.local_data, batch_size = self.batch_size * 5))
+    #     self.H_ji, acc_ji = self.sess.run([self.loss, self.accuracy], feed_dict=self.load_feed_dict(data = self.buffer_data, batch_size = self.buffer_size))
+        
+    #     reward = entro_gap * action_flag - trans_penalty * action_flag - self.H_ii_t
+    #     self.H_ii_0 = self.H_ii_t
+    #     # observation =  np.array([buffer_partition, iter_partion, self.H_ii_0, acc_ii, self.H_ji, acc_ji])
+    #     observation =  np.array([self.H_ii_0, acc_ii, self.H_ji, acc_ji])
+
+    #     if self.learn_step_counter >= self.learning_steps_max:
+    #         self.done = True
+    #     else:
+    #         self.done = False
+        
+    #     return observation, reward, self.done
+  ## relative observation
+    def step(self, action, trans_penalty, alpha=100, action_base = 1.0):
         entro_gap = (self.H_ji - self.H_ii_0)
         past_loss = []
         if action==0:
@@ -135,14 +187,19 @@ class Learner_entro_reward:
         buffer_partition = self.buffer_size / self.local_data.shape[0]
         iter_partion = self.learn_step_counter / self.learning_steps_max
         self.H_ii_t = np.mean(past_loss[-5:])
-        
+        self.H_ii_relative = (self.H_ii_t - self.H_ii_0)/self.H_ii_0
         acc_ii = self.sess.run(self.accuracy, feed_dict=self.load_feed_dict(data = self.local_data, batch_size = self.batch_size * 5))
         self.H_ji, acc_ji = self.sess.run([self.loss, self.accuracy], feed_dict=self.load_feed_dict(data = self.buffer_data, batch_size = self.buffer_size))
-        
-        reward = entro_gap * action_flag - trans_penalty * action_flag - self.H_ii_t
+        self.H_ji_relative = (self.H_ji-self.H_ii_t)/self.H_ii_t
+        # reward 2: only maximum loss gap
+        # reward = - trans_penalty * action_flag + (self.H_ii_0-self.H_ii_t)
+        # reward 1: maximum loss gap & entropy gain
+        reward = entro_gap * action_flag  - trans_penalty * action_flag + (self.H_ii_0-self.H_ii_t)
+        # reward 0: minimum loss
+        #  reward =  entro_gap * action_flag  - trans_penalty * action_flag - self.H_ii_t
         self.H_ii_0 = self.H_ii_t
-        observation =  np.array([buffer_partition, iter_partion, self.H_ii_0, acc_ii, self.H_ji, acc_ji])
-        
+        # observation =  np.array([buffer_partition, iter_partion, self.H_ii_0, acc_ii, self.H_ji, acc_ji])
+        observation =  np.array([self.H_ii_relative, self.H_ii_0, self.H_ji_relative, trans_penalty])
 
         if self.learn_step_counter >= self.learning_steps_max:
             self.done = True
@@ -150,8 +207,27 @@ class Learner_entro_reward:
             self.done = False
         
         return observation, reward, self.done
+  ## relative observation
+    # def reset(self):
+    #     #reset data and load buffer
+    #     self.local_data = self.i_data
+    #     self.trans_data = self.j_data
+    #     self.buffer_data = self.trans_data.sample(n=self.buffer_size)
+    #     #init vals
+    #     self.learn_step_counter = 0
+    #     self.done = False
+    #     self.sess.run(self.init_op)
 
-    def reset(self):
+    #     buffer_partition = self.buffer_size / self.local_data.shape[0]
+    #     iter_partion = 0
+    #     self.H_ii_0, acc_ii = self.sess.run([self.loss, self.accuracy], feed_dict=self.load_feed_dict(data = self.local_data, batch_size = self.batch_size * 5))
+    #     self.H_ji, acc_ji = self.sess.run([self.loss, self.accuracy], feed_dict=self.load_feed_dict(data = self.buffer_data, batch_size = self.buffer_size))
+
+    #     # observation =  np.array([buffer_partition, iter_partion, self.H_ii_0, acc_ii, self.H_ji, acc_ji])
+    #     observation =  np.array([self.H_ii_0, acc_ii, self.H_ji, acc_ji])
+    #     return observation
+  ## relative observation
+    def reset(self, trans_penalty):
         #reset data and load buffer
         self.local_data = self.i_data
         self.trans_data = self.j_data
@@ -165,9 +241,13 @@ class Learner_entro_reward:
         iter_partion = 0
         self.H_ii_0, acc_ii = self.sess.run([self.loss, self.accuracy], feed_dict=self.load_feed_dict(data = self.local_data, batch_size = self.batch_size * 5))
         self.H_ji, acc_ji = self.sess.run([self.loss, self.accuracy], feed_dict=self.load_feed_dict(data = self.buffer_data, batch_size = self.buffer_size))
-
-        observation =  np.array([buffer_partition, iter_partion, self.H_ii_0, acc_ii, self.H_ji, acc_ji])
+        self.H_ii_relative = 1.
+        self.H_ji_relative = (self.H_ji-self.H_ii_0)/self.H_ii_0
+        # observation =  np.array([buffer_partition, iter_partion, self.H_ii_0, acc_ii, self.H_ji, acc_ji])
+        # observation =  np.array([self.H_ii_relative, self.H_ji_relative, buffer_partition, trans_penalty])
+        observation =  np.array([self.H_ii_relative, self.H_ii_0, self.H_ji_relative, trans_penalty])
         return observation
+  ## relative observation
     def test(self, dataset, batch_size=1000):
         loss, acc= self.sess.run([self.loss, self.accuracy] , feed_dict=self.load_feed_dict(data = dataset, batch_size = batch_size))
         print('\naccuracy on test set: ', acc)
