@@ -96,14 +96,15 @@ class LearnerEnv:
         self.H_ji = self.sess.run(self.loss, feed_dict=self.load_feed_dict(data = self.buffer_data, batch_size = self.buffer_size))
         self.H_ji_relative = (self.H_ji - self.H_ii_t) / self.H_ii_t #buffer数据对当前学习的重要性
         self.H_ii_relative = (self.H_ii_t - self.H_ii_0)/self.H_ii_0
-        self.H_ii_0 = self.H_ii_t
-        self.observation = np.array([self.H_ii_relative, self.H_ii_0, self.H_ji_relative, trans_penalty])
+        
+        self.observation = np.array([self.H_ii_relative, self.H_ii_t, self.H_ji_relative, trans_penalty])
         return self.observation
 
-    def step1_action(self, action, trans_penalty, buffdata=self.buffer_data, action_base = 1.0):
+    def step1_action(self, action, buffdata, trans_penalty, action_base = 1.0):
+        self.H_ii_0 = self.H_ii_t
         if action==0:
             self.action_value = 0
-        else
+        else:
             #concat Dji U Dii
             self.buffer_data = buffdata
             self.buffer_data['weights']= action_base * action
@@ -125,7 +126,7 @@ class LearnerEnv:
         else:
             self.done = False
         return reward
-    def reset(self, trans_penalty, buffdata):
+    def reset(self, buffdata, trans_penalty):
         #reset data and load buffer
         self.done = False
         self.local_data = self.i_data
@@ -147,29 +148,104 @@ class LearnerEnv:
 
 if __name__ == "__main__":
     from tool_func import *
-    log_dir = './logs'
-    data_dir = './datas/50div10gmm10-1.csv'
-    dataset_1 = load_datasets(data_dir_1)
-    dataset_2 = load_datasets(data_dir_2)
-    dataset_3 = load_datasets(data_dir_3)
-    penal_i = 1.5
-    penal_j = 1.5
-    buff_i = dataset_2.sample(n=100)
-    buff_j = dataset_3.sample(n=100)
-    LearnerEnv_1 = LearnerEnv(dataset_1)
-    observation_i = LearnerEnv_1.reset(penal_i, buff_i)
-    observation_j = LearnerEnv_1.reset(penal_j, buff_j)
-    while(LearnerEnv_1.done == False):
-        action_i, q_i = RL.choose_action(observation_i)
-        action_j, q_j = RL.choose_action(observation_j)
-        if(q_i>q_j):
-            LearnerEnv_1.step1_action(action_i, penal_i, buff_i)
-            reward = LearnerEnv_1.step2_train_and_get_reward()
-            buff_i = dataset_2.sample(n=100)
-        else:
-            LearnerEnv_1.step1_action(action_j, penal_j, buff_j)
-            reward = LearnerEnv_1.step2_train_and_get_reward()
-            buff_j = dataset_3.sample(n=100)
-        observation_i = LearnerEnv_1.get_observation(penal_i, buff_i)
-        observation_j = LearnerEnv_1.get_observation(penal_j, buff_j)
+    from PDDQN import *
+    # log_dir = './logs'
+    data_dir_1 = './datas/50div10gmm10/d1.csv'
+    data_dir_2 = './datas/50div10gmm10/d2.csv'
+    data_dir_3 = './datas/50div10gmm10/d3.csv'
+    data_dir_all = './datas/50div10gmm10/dall.csv'
+    dataset_1 = load_weighted_datasets(data_dir_1)
+    dataset_2 = load_weighted_datasets(data_dir_2)
+    dataset_3 = load_weighted_datasets(data_dir_3)
+    dataset_all = load_weighted_datasets(data_dir_all)
+    
+    penal_i = 1.0
+    penal_j = 1.0
+    BUFF_SIZE = 100
+    buff_i = dataset_2.sample(n=BUFF_SIZE)
+    buff_j = dataset_3.sample(n=BUFF_SIZE)
+    LearnerEnv_1 = LearnerEnv(        
+        i_data=dataset_1,
+        learning_steps = 200,
+        learning_steps_max = 50000,
+        feature_size = 50,)
 
+    with tf.variable_scope('DQN_with_prioritized_replay'):
+        RL = DQNPrioritizedReplay(
+            n_actions=5, #trans weights
+            n_features=4,
+            # learning_rate=0.01, #RL learning rate
+            learning_rate=0.001, #retrain learning rate
+            reward_decay=0.98, #reward decay --the infuluence of reward
+            e_greedy=0.98,#max e-greedy
+            e_greedy_increment=None, 
+            replace_target_iter=20,
+            memory_size=100,
+            batch_size=10,
+
+            output_graph=False,
+            prioritized=True,
+            dueling=False,
+            sess=None, #for reload
+        )    
+    model_file = tf.train.latest_checkpoint('./ckpt/')
+    tf.train.Saver().restore(RL.sess, model_file)
+
+    observation_i = LearnerEnv_1.reset(buff_i, penal_i)
+    observation_j = LearnerEnv_1.reset(buff_j, penal_j)
+    step = 0
+    action_num = 0
+    while(LearnerEnv_1.done == False):
+        
+        print('obs.:')
+        print('i:', observation_i)
+        print('j:', observation_j)
+        action_i, q_i_ , _i = RL.choose_action(observation_i)
+        q_i = q_i_[0][action_i]
+        print('action_1: ', action_i, '\tq_i: ', q_i, _i)
+        action_j, q_j_ , _j = RL.choose_action(observation_j)
+        q_j = q_j_[0][action_j]
+        print('action_2: ', action_j, '\tq_j: ', q_j, _j)
+        if(action_i>0 and action_j>0):
+            action_num+=1
+            if(q_i>q_j):
+                print('choosing iiiii...\n')
+                LearnerEnv_1.step1_action(action_i, buff_i, penal_i)
+                reward = LearnerEnv_1.step2_train_and_get_reward()
+                print('reward:', reward)
+                buff_i = dataset_2.sample(n=BUFF_SIZE)
+            else:
+                print('choosing jjj...\n')
+                LearnerEnv_1.step1_action(action_j, buff_j, penal_j)
+                reward = LearnerEnv_1.step2_train_and_get_reward()
+                print('reward:', reward,'\n')
+                buff_j = dataset_3.sample(n=BUFF_SIZE)
+        elif(action_i!=0):
+            action_num+=1
+            print('choosing iiiii...\n')
+            LearnerEnv_1.step1_action(action_i, buff_i, penal_i)
+            reward = LearnerEnv_1.step2_train_and_get_reward()
+            print('reward:', reward)
+            buff_i = dataset_2.sample(n=BUFF_SIZE)
+        elif(action_j!=0):
+            action_num+=1
+            print('choosing jjj...\n')
+            LearnerEnv_1.step1_action(action_j, buff_j, penal_j)
+            reward = LearnerEnv_1.step2_train_and_get_reward()
+            print('reward:', reward,'\n')
+            buff_j = dataset_3.sample(n=BUFF_SIZE)
+        else:
+            print('no trans...')
+            LearnerEnv_1.step1_action(0, buff_j, penal_j)
+            reward = LearnerEnv_1.step2_train_and_get_reward()
+            print('reward:', reward,'\n')
+        if(step%5==0):
+            data_tst = dataset_all.sample(n=2000)
+            LearnerEnv_1.test(data_tst)
+            
+
+        observation_i = LearnerEnv_1.get_observation(buff_i, penal_i)
+        observation_j = LearnerEnv_1.get_observation(buff_j, penal_j)
+        step+=1
+
+    print('action_num:', action_num)
