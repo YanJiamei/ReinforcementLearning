@@ -194,9 +194,9 @@ class Learner_entro_reward:
         # reward 2: only maximum loss gap
         # reward = - trans_penalty * action_flag + (self.H_ii_0-self.H_ii_t)
         # reward 1: maximum loss gap & entropy gain
-        reward = entro_gap * action_flag  - trans_penalty * action_flag + (self.H_ii_0-self.H_ii_t)
+        # reward = entro_gap * action_flag  - trans_penalty * action_flag + (self.H_ii_0-self.H_ii_t)
         # reward 0: minimum loss
-        #  reward =  entro_gap * action_flag  - trans_penalty * action_flag - self.H_ii_t
+        reward =  entro_gap * action_flag  - trans_penalty * action_flag - self.H_ii_t
         self.H_ii_0 = self.H_ii_t
         # observation =  np.array([buffer_partition, iter_partion, self.H_ii_0, acc_ii, self.H_ji, acc_ji])
         observation =  np.array([self.H_ii_relative, self.H_ii_0, self.H_ji_relative, trans_penalty])
