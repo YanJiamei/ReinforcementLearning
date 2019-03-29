@@ -245,15 +245,15 @@ class DQNPrioritizedReplay:
         observation = observation[np.newaxis, :]
         random = 'choose'
         if np.random.uniform() < self.epsilon:
-            actions_value = self.sess.run(self.q_eval, feed_dict={self.s: observation})
-            action = np.argmax(actions_value)
+            self.actions_value = self.sess.run(self.q_eval, feed_dict={self.s: observation})
+            action = np.argmax(self.actions_value)
         else:
             print('\nRANDOM ACTION')
             random = 'random'
             action = np.random.randint(0, self.n_actions)
             #if np.random.uniform() < 0.4:
              #   action = 0
-        return action, random
+        return action, self.actions_value, random
 
     def learn(self):
         if self.learn_step_counter % self.replace_target_iter == 0:
