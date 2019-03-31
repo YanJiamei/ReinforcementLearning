@@ -40,8 +40,9 @@ class LearnerEnv:
         self.graph = tf.Graph()
         self.sess = tf.Session(graph=self.graph)
         self._build_net() #contains global initializer()
+        
         self.sess.run(self.init_op)
-
+        
     def _build_net(self):
         with self.graph.as_default():
             with tf.variable_scope('local_data'):
@@ -64,7 +65,7 @@ class LearnerEnv:
                     w2 = tf.get_variable('w2', [self.n_l1, self.output_node], initializer=w_initializer)
                     b2 = tf.get_variable('b2', [self.output_node], initializer=b_initializer)
                     self.y = tf.matmul(l1, w2) + b2
-                    # self.soft_max_prob = tf.nn.softmax(self.y)
+                    self.soft_max_prob = tf.nn.softmax(self.y)
                 with tf.variable_scope('weighted_loss'):
                     self.cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.y, labels = self.y_)
                     weighted_cross_entropy =tf.multiply(self.cross_entropy, self.w)
@@ -76,11 +77,14 @@ class LearnerEnv:
                     self.train = tf.train.AdagradOptimizer(self.learning_rate).minimize(self.weighted_loss, global_step=self.global_step)
                     
                 with tf.variable_scope('accuracy'):
-                    correct_prediction = tf.equal(tf.argmax(self.y, 1), self.y_)
+                    correct_prediction = tf.equal(tf.argmax(self.y, 1), self.y_) #axis=1
                     correct_prediction_float = tf.cast(correct_prediction, tf.float32)
                     self.accuracy = tf.reduce_mean(correct_prediction_float)
-
             self.init_op = tf.initialize_all_variables()
+            self.saver = tf.train.Saver()
+
+    def save_model(self, name):
+        self.saver.save(self.sess, (name))
 
     def load_feed_dict(self,data,batch_size):
         batch = data.sample(n=batch_size)
@@ -90,7 +94,22 @@ class LearnerEnv:
             self.w: batch['weights'].as_matrix()
         }
         return feed_dict
+        
+    def get_softmax_output(self,data):
+        feed_dict = {
+            self.x: data.iloc[:,range(self.input_node)].as_matrix(), 
+            self.y_: data['label'].as_matrix(), 
+            self.w: data['weights'].as_matrix()
+        }
+        soft_max = self.sess.run(self.soft_max_prob, feed_dict=feed_dict)
+        return soft_max
 
+    def local_train(self, step):
+        for i in range(step):
+            _, loss, self.learn_step_counter= \
+                self.sess.run([self.train, self.loss, self.global_step], feed_dict=self.load_feed_dict(data = self.local_data, batch_size = self.batch_size))
+            if i%1000==0:
+                print('loss: ',loss)
     def get_observation(self, buffdata, trans_penalty):
         self.buffer_data = buffdata
         self.H_ji = self.sess.run(self.loss, feed_dict=self.load_feed_dict(data = self.buffer_data, batch_size = self.buffer_size))
